@@ -15,7 +15,7 @@ import traceback
 import re
 import logging
 from math import log, floor
-from typing import Union, Optional
+from typing import Dict, List, Set, Union, Optional
 
 __author__ = "Nuno Canto Brum <nuno.brum@gmail.com>"
 __copyright__ = "Copyright 2021, Fribourg Switzerland"
@@ -58,43 +58,68 @@ SPICE_DOT_INSTRUCTIONS = (
 REPLACE_REGXES = {
     'A': r"^(A\w+)(\s+\S+){8}\s+(?P<value>.*)(\s+\w+\s*=\s*\S+)*\s*$",  # Special Functions, Parameter substitution not supported
     'B': r"^(B[VI]?\w+)(\s+\S+){2}\s+(?P<value>.*)$",  # Behavioral source
-    'C': r"^(C\w+)(\s+\S+){2}\s+(?P<value>({)?(?(4).*}|([0-9\.E+-]+(Meg|[kmunp])?F?))).*$",  # Capacitor
-    'D': r"^(D\w+)(\s+\S+){2}\s+(?P<value>\w+).*$",  # Diode
-    'I': r"^(I\w+)(\s+\S+){2}\s+(?P<value>.*)$",  # Current Source
-    'E': r"^(E\w+)(\s+\S+){2,4}\s+(?P<value>.*)$",  # Voltage Dependent Voltage Source
+    'C': r"^(?P<name>C§?\w+)\s+(?P<nplus>\S+)\s+(?P<nminus>\S+)\s+(?P<value>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?)(\s+IC=(?P<initcond>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?))?.*$",  # Capacitor
+    'D': r"^(?P<name>D§?\w+)\s+(?P<nplus>\S+)\s+(?P<nminus>\S+)\s+(?P<model>\S+).*$",  # Diode
+    'E': r"^(?P<name>E§?\w+)\s+(?P<nplus>\S+)\s+(?P<nminus>\S+)\s+(\()?(?P<ncplus>\S+)(?(4),\s*|\s+)(?P<ncminus>\S+)(?(4)\)|)\s+(?P<value>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?).*$",  # Voltage Dependent Voltage Source
                                                         # this only supports changing gain values
-    'F': r"^(F\w+)(\s+\S+){2}\s+(?P<value>.*)$",  # Current Dependent Current Source
+    'F': r"^(?P<name>F§?\w+)\s+(?P<nplus>\S+)\s+(?P<nminus>\S+)\s+((?P<nvcontrol>\S+)\s+)?(?P<value>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?).*$",  # Current Dependent Current Source
                                                         # TODO: this implementation replaces everything after the 2
                                                         #       first nets
-    'G': r"^(G\w+)(\s+\S+){2,4}\s+(?P<value>.*)$",  # Voltage Dependent Current Source
+    'G': r"^(?P<name>G§?\w+)\s+(?P<nplus>\S+)\s+(?P<nminus>\S+)\s+(\()?(?P<ncplus>\S+)(?(4),\s*|\s+)(?P<ncminus>\S+)(?(4)\)|)\s+(?P<value>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?).*$",  # Voltage Dependent Current Source
                                                         # this only supports changing gain values
-    'H': r"^(H\w+)(\s+\S+){2}\s+(?P<value>.*)$",  # Voltage Dependent Current Source
+    'H': r"^(?P<name>H§?\w+)\s+(?P<nplus>\S+)\s+(?P<nminus>\S+)\s+((?P<nvcontrol>\S+)\s+)?(?P<value>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?).*$",  # Voltage Dependent Current Source
                                                         # TODO: this implementation replaces everything after the 2
                                                         #       first nets
-    'I': r"^(I\w+)(\s+\S+){2}\s+(?P<value>.*)$",  # Current Source
+    'I': r"^(?P<name>I§?\w+)\s+(?P<nplus>\S+)\s+(?P<nminus>\S+)\s+((?P<model>\S+)\s+)?(DC=\s*)?(?P<value>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?).*$",  # Current Source
                                                         # TODO: this implementation replaces everything after the 2
                                                         #       first nets
     'J': r"^(J\w+)(\s+\S+){3}\s+(?P<value>\w+).*$",  # JFET
     'K': r"^(K\w+)(\s+\S+){2,4}\s+(?P<value>[\+\-]?[0-9\.E+-]+[kmunp]?).*$",  # Mutual Inductance
-    'L': r"^(L\w+)(\s+\S+){2}\s+(?P<value>({)?(?(4).*}|([0-9\.E+-]+(Meg|[kmunp])?H?))).*$",  # Inductance
-    'M': r"^(M\w+)(\s+\S+){3,4}\s+(?P<value>\w+).*$",  # MOSFET TODO: Parameters substitution not supported
+    'L': r"^(?P<name>L§?\w+)\s+(?P<nplus>\S+)\s+(?P<nminus>\S+)\s+(?P<value>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?)(\s+IC=(?P<initcond>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?))?.*$",  # Inductance
+    'M': r"^(?P<name>M§?\w+)\s+(?P<nd>\S+)\s+(?P<ng>\S+)\s+(?P<ns>\S+)\s+(?P<nb>\S+)\s+(?P<model>\S+)\s+(L=(?P<lvalue>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?))?(\s+W=(?P<wvalue>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?))?.*$",  # MOSFET TODO: Parameters substitution not supported
     'O': r"^(O\w+)(\s+\S+){4}\s+(?P<value>\w+).*$",  # Lossy Transmission Line TODO: Parameters substitution not supported
-    'Q': r"^(Q\w+)(\s+\S+){3}\s+(?P<value>\w+).*$",  # Bipolar TODO: Parameters substitution not supported
-    'R': r"^(R\w+)(\s+\S+){2}\s+(?P<value>({)?(?(4).*}|([0-9\.E+-]+(Meg|[kmunp])?R?))).*$",  # Resistors
+    'Q': r"^(?P<name>Q§?\w+)\s+(?P<nc>\S+)\s+(?P<nb>\S+)\s+(?P<ne>\S+)\s+(?P<model>\S+).*$",  # Bipolar TODO: Parameters substitution not supported
+    'R': r"^(?P<name>R§?\w+)\s+(?P<nplus>\S+)\s+(?P<nminus>\S+)\s+(?P<value>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?).*$",  # Resistors
     'S': r"^(S\w+)(\s+\S+){4}\s+(?P<value>.*)$",  # Voltage Controlled Switch
     'T': r"^(T\w+)(\s+\S+){4}\s+(?P<value>.*)$",  # Lossless Transmission
     'U': r"^(U\w+)(\s+\S+){3}\s+(?P<value>.*)$",  # Uniform RC-line
-    'V': r"^(V\w+)(\s+\S+){2}\s+(?P<value>.*)$",  # Voltage Source
+    'V': r"^(?P<name>V§?\w+)\s+(?P<nplus>\S+)\s+(?P<nminus>\S+)\s+((?P<model>\S+)\s+)?(DC=\s*)?(?P<value>[+-]?((\d+(\.\d*)?)|(\.\d+))(E-?\d+)?(Meg|[pnumkgt])?).*$",  # Voltage Source
                                                         # TODO: this implementation replaces everything after the 2
                                                         #       first nets
     'W': r"^(W\w+)(\s+\S+){2}\s+(?P<value>.*)$",  # Current Controlled Switch
                                                         # TODO: this implementation replaces everything after the 2
                                                         #       first nets
-    'X': r"(X\w+)(\s+\S+){1,99}\s+(?P<value>\S+)(\s+\w+\s*=\s*\S+)*\s*$",  # Sub-circuit, Parameter substitution not supported
+    'X': r"(?P<name>X§?\w+)(\s+\S+){1,99}\s+(?P<model>\S+).*$",  # Sub-circuit, Parameter substitution not supported
     'Z': r"^(Z\w+)(\s+\S+){3}\s+(?P<value>\w+).*$",  # MESFET and IBGT. TODO: Parameters substitution not supported
 }
 
 PARAM_REGX = r"%s\s*=\s*(?P<value>[\w*/\.+-/{}()]*)"
+
+NODE_NAMES = {
+    'A': "",
+    'B': "",
+    'C': ["nplus", "nminus"],
+    'D': ["nplus", "nminus"],
+    'E': ["nplus", "nminus", "ncplus", "ncminus"],
+    'F': ["nplus", "nminus", "nvcontrol"],
+    'G': ["nplus", "nminus", "ncplus", "ncminus"],
+    'H': ["nplus", "nminus", "nvcontrol"],
+    'I': ["nplus", "nminus"],
+    'J': "",
+    'K': "",
+    'L': ["nplus", "nminus"],
+    'M': ["nd", "ng", "ns", "nb"],
+    'O': "",
+    'Q': ["nc", "nb", "ne"],
+    'R': ["nplus", "nminus"],
+    'S': "",
+    'T': "",
+    'U': "",
+    'V': ["nplus", "nminus"],
+    'W': "",
+    # 'X': ["nd", "ng", "ns"],
+    'Z': "",
+}
 
 
 def format_eng(value):
@@ -115,17 +140,22 @@ def format_eng(value):
     :return: String wiht the formatted value
     :rtype: str
     """
-    e = floor(log(abs(value), 1000))
-    if -4 <= e < 0:
-        suffix = "pnum"[e]
-    elif e == 0:
+    if value == 0.0:
+        e = 0
         suffix = ''
-    elif e == 1:
-        suffix = "k"
-    elif e == 2:
-        suffix = 'Meg'
     else:
-        return '{:E}'.format(value)
+        e = floor(log(abs(value), 1000))
+        if -4 <= e < 0:
+            suffix = "pnum"[e]
+        elif e == 0:
+            suffix = ''
+        elif e == 1:
+            suffix = "k"
+        elif e == 2:
+            suffix = 'Meg'
+        else:
+            return '{:E}'.format(value)
+    
     return '{:g}{:}'.format(value* 1000**-e, suffix)
 
 
@@ -324,6 +354,14 @@ class SpiceCircuit(object):
     def _get_component_info(self, component) -> Optional[dict]:
         """Internal function. Do not use."""
         prefix = component[0]  # Using the first letter of the component to identify what is it
+        if prefix == "X":
+            line_no = self._getline_startingwith(component)
+            line = self.netlist[line_no].split()
+            info: Dict[str, str] = {"name": line[0], "model": line[-1]}
+            for i, node in enumerate(line[1:-1]):
+                info[f"n{i}"] = node
+            return info
+        
         regxstr = REPLACE_REGXES.get(prefix, None)  # Obtain RegX to make the update
 
         if regxstr is None:
@@ -412,7 +450,7 @@ class SpiceCircuit(object):
         for param in kwargs:
             self.set_parameter(param, kwargs[param])
 
-    def set_component_value(self, device: str, value: Union[str, int, float]) -> None:
+    def set_component_value(self, component: str, value: Union[str, int, float]) -> None:
         """Changes the value of a component, such as a Resistor, Capacitor or Inductor.
         Usage: ::
 
@@ -434,9 +472,38 @@ class SpiceCircuit(object):
 
             If this is the case, use GitHub to start a ticket.  https://github.com/nunobrum/PyLTSpice
         """
-        self._set_model_and_value(device, value)
+        prefix = component[0]  # Using the first letter of the component to identify what is it
+        regxstr = REPLACE_REGXES.get(prefix, None)  # Obtain RegX to make the update
 
-    def set_element_model(self, element: str, model: str) -> None:
+        if regxstr is None:
+            print("Component must start with one of these letters:\n", ','.join(REPLACE_REGXES.keys()))
+            print("Got '{}'".format(component))
+            return
+
+        if isinstance(value, str):
+            regxvaluestr = _get_group_regxstr(regxstr, 'value')
+            regexvalue = re.compile(regxvaluestr, re.IGNORECASE)
+            m = regexvalue.match(value)
+            if m is None:
+                raise ValueError("Value is not in the good format. Expecting ""{}"". Got ""{}""".format(regxvaluestr,
+                                                                                                        value))
+        else:
+            value = format_eng(value)
+
+        line_no = self._getline_startingwith(component)
+        regex = re.compile(regxstr, re.IGNORECASE)
+        line = self.netlist[line_no]
+        m = regex.match(line)
+        if m is None:
+            raise NotImplementedError('Unsupported line "{}"\nExpected format is "{}"'.format(line, regxstr))
+            # print("Unsupported line ""{}""".format(line))
+        else:
+            start = m.start('value')
+            end = m.end('value')
+            line = line[:start] + value + line[end:]
+            self.netlist[line_no] = line
+
+    def set_element_model(self, component: str, model: str) -> None:
         """Changes the value of a circuit element, such as a diode model or a voltage supply.
         Usage: ::
 
@@ -457,7 +524,32 @@ class SpiceCircuit(object):
 
             If this is the case, use GitHub to start a ticket.  https://github.com/nunobrum/PyLTSpice
         """
-        self._set_model_and_value(element, model)
+        prefix = component[0]  # Using the first letter of the component to identify what is it
+        regxstr = REPLACE_REGXES.get(prefix, None)  # Obtain RegX to make the update
+
+        if regxstr is None:
+            print("Component must start with one of these letters:\n", ','.join(REPLACE_REGXES.keys()))
+            print("Got '{}'".format(component))
+            return
+
+        regxvaluestr = _get_group_regxstr(regxstr, 'model')
+        regexvalue = re.compile(regxvaluestr, re.IGNORECASE)
+        m = regexvalue.match(model)
+        if m is None:
+            raise ValueError("Value is not in the good format. Expecting ""{}"". Got ""{}""".format(regxvaluestr, model))
+
+        line_no = self._getline_startingwith(component)
+        regex = re.compile(regxstr, re.IGNORECASE)
+        line = self.netlist[line_no]
+        m = regex.match(line)
+        if m is None:
+            raise NotImplementedError('Unsupported line "{}"\nExpected format is "{}"'.format(line, regxstr))
+            # print("Unsupported line ""{}""".format(line))
+        else:
+            start = m.start('model')
+            end = m.end('model')
+            line = line[:start] + model + line[end:]
+            self.netlist[line_no] = line
 
     def get_component_value(self, element: str) -> str:
         """
@@ -545,10 +637,36 @@ class SpiceCircuit(object):
         """
         line = self._getline_startingwith(designator)
         del self.netlist[line]  # Deletes the line
+        
+    def add_component(self, line: Union[str, List[str]]) -> None:
+        if isinstance(line, str):
+            line = line.split()
+        
+        components = self.get_components()
+        if line[0] in components:
+            self.logger.warn(f"{line[0]} already in netlist. Skipping.")
+            return
+        
+        self.netlist.insert(len(components) + 1, " ".join(line) + END_LINE_TERM)
 
-    def get_all_nodes(self):
-        # TODO: Implement a function that retrieves all nodes existing on a Netlist
-        raise NotImplementedError("'get_all_nodes()' function not implemented")
+    def get_nodes(self, designator: str) -> Dict[str, str]:
+        info: Dict[str] = self._get_component_info(designator)
+        if designator[0] == "X":
+            nodes: List[str] = [f"n{i}" for i in range(len(info) - 2)]
+        else:
+            nodes: List[str] = NODE_NAMES[designator[0]]
+        return {key: info[key] for key in nodes}
+        
+    def get_all_nodes(self) -> Set[str]:
+        nodes: Set[str] = set()
+        for component in self.get_components():
+            for _, node in self.get_nodes(component).items():
+                nodes.add(node)
+                
+        return nodes
+    
+    def get_component_model(self, element: str) -> str:
+        return self._get_component_info(element)["model"]
 
 
 class SpiceEditor(SpiceCircuit):
